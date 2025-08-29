@@ -2,6 +2,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <tf2_ros/transform_listener.h>
+#include "tf2_ros/buffer.h"
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/create_timer_ros.h>
 #include <tf2/utils.h>
@@ -48,33 +49,31 @@ class OccupancyGridMapping :public rclcpp::Node
 {
     public:
 
-        OccupancyGridMapping(): Node("OccupancyGridMapping"), 
-                                scan_sub_(this, std::string("scan")), 
+        OccupancyGridMapping(): Node("OccupancyGridMapping"),
+                                scan_sub_(this, std::string("scan")),
                                 non_leg_clusters_sub_(this, "non_leg_clusters"),
                                 sync(scan_sub_, non_leg_clusters_sub_, 100)
         {
-            std::string local_map_topic;
-            std::string scan_topic;
             grid_centre_pos_found_ = false;
-            
-            this->declare_parameter("scan_topic");
-            this->declare_parameter("fixed_frame");
-            this->declare_parameter("base_frame");
-            this->declare_parameter("local_map_topic");
-            this->declare_parameter("local_map_resolution");
-            this->declare_parameter("local_map_cells_per_side");
-            this->declare_parameter("invalid_measurements_are_free_space");
-            this->declare_parameter("unseen_is_free_space");
-            this->declare_parameter("use_scan_header_stamp_for_tfs");
-            this->declare_parameter("shift_threshold");
-            this->declare_parameter("reliable_inf_range");
-            this->declare_parameter("cluster_dist_euclid");
-            this->declare_parameter("min_points_per_cluster");
-            
-            this->get_parameter_or("scan_topic", scan_topic, std::string("/scan"));
+
+            this->declare_parameter("scan_topic", "/scan");
+            this->declare_parameter("fixed_frame", "laser");
+            this->declare_parameter("base_frame", "base_link");
+            this->declare_parameter("local_map_topic", "local_map");
+            this->declare_parameter("local_map_cells_per_side", 400);
+            this->declare_parameter("invalid_measurements_are_free_space", false);
+            this->declare_parameter("unseen_is_free_space", true);
+            this->declare_parameter("use_scan_header_stamp_for_tfs", false);
+            this->declare_parameter("local_map_resolution", 0.05);
+            this->declare_parameter("shift_threshold", 1.0);
+            this->declare_parameter("reliable_inf_range", 5.0);
+            this->declare_parameter("cluster_dist_euclid", 0.13);
+            this->declare_parameter("min_points_per_cluster", 3);
+
+            this->get_parameter_or("scan_topic", scan_topic_, std::string("/scan"));
             this->get_parameter_or("fixed_frame", fixed_frame_, std::string("laser"));
             this->get_parameter_or("base_frame", base_frame_, std::string("base_link"));
-            this->get_parameter_or("local_map_topic", local_map_topic, std::string("local_map"));
+            this->get_parameter_or("local_map_topic", local_map_topic_, std::string("local_map"));
             this->get_parameter_or("local_map_resolution", resolution_, 0.05);
             this->get_parameter_or("local_map_cells_per_side", width_, 400);
             this->get_parameter_or("invalid_measurements_are_free_space", invalid_measurements_are_free_space_, false);
@@ -110,14 +109,19 @@ class OccupancyGridMapping :public rclcpp::Node
                                                             this->get_node_timers_interface());
             buffer_->setCreateTimerInterface(timer_interface);
 
-            scan_sub_.subscribe(this, scan_topic);
-            
+            rclcpp::QoS scan_qos_profile(rclcpp::QoSInitialization::from_rmw(rmw_qos_profile_sensor_data));
+            scan_qos_profile.best_effort();
+            scan_qos_profile.keep_last(10);
+            scan_qos_profile.durability_volatile();
+            scan_sub_.subscribe(this, scan_topic_, scan_qos_profile);
+
 
             // To coordinate callback for both laser scan message and a non_leg_clusters message
             sync.registerCallback(std::bind(&OccupancyGridMapping::laserAndLegCallback, this, std::placeholders::_1, std::placeholders::_2));
 
-            map_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(local_map_topic, 10);
+            map_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(local_map_topic_, 10);
             markers_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("visualization_marker", 20);
+            param_callback_handle_ = this->add_on_set_parameters_callback(std::bind(&OccupancyGridMapping::on_parameter_change, this, std::placeholders::_1));
 
         }
 
@@ -126,6 +130,7 @@ class OccupancyGridMapping :public rclcpp::Node
         std::string scan_topic_;
         std::string fixed_frame_;
         std::string base_frame_;
+        std::string local_map_topic_;
 
         //-----
         message_filters::Subscriber<sensor_msgs::msg::LaserScan> scan_sub_;
@@ -133,6 +138,7 @@ class OccupancyGridMapping :public rclcpp::Node
         message_filters::TimeSynchronizer<sensor_msgs::msg::LaserScan, leg_detector_msgs::msg::LegArray> sync;
         rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_pub_;
         rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr markers_pub_;
+        OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
 
         //-----
 
@@ -163,12 +169,194 @@ class OccupancyGridMapping :public rclcpp::Node
         std::shared_ptr<tf2_ros::Buffer> buffer_;
 
 
+        rcl_interfaces::msg::SetParametersResult on_parameter_change(const std::vector<rclcpp::Parameter> &params)
+        {
+            rcl_interfaces::msg::SetParametersResult result;
+            result.successful = true;
+            result.reason = "success";
+
+            for (const auto &param : params)
+            {
+              if (param.get_name() == "scan_topic")
+              {
+                if (param.get_type() == rclcpp::ParameterType::PARAMETER_STRING && !param.as_string().empty())
+                {
+                  RCLCPP_INFO(this->get_logger(), "Updated scan_topic to %s", param.as_string().c_str());
+                  scan_topic_ = param.as_string();
+                }
+                else
+                {
+                  result.successful = false;
+                  result.reason = "scan_topic can not be empty";
+                }
+              }
+              else if (param.get_name() == "fixed_frame")
+              {
+                if (param.get_type() == rclcpp::ParameterType::PARAMETER_STRING && !param.as_string().empty())
+                {
+                  RCLCPP_INFO(this->get_logger(), "Updated fixed_frame to %s", param.as_string().c_str());
+                  fixed_frame_ = param.as_string();
+                }
+                else
+                {
+                  result.successful = false;
+                  result.reason = "fixed_frame can not be empty";
+                }
+              }
+              else if (param.get_name() == "base_frame")
+              {
+                if (param.get_type() == rclcpp::ParameterType::PARAMETER_STRING && !param.as_string().empty())
+                {
+                  RCLCPP_INFO(this->get_logger(), "Updated base_frame to %s", param.as_string().c_str());
+                  base_frame_ = param.as_string();
+                }
+                else
+                {
+                  result.successful = false;
+                  result.reason = "base_frame can not be empty";
+                }
+              }
+              else if (param.get_name() == "local_map_topic")
+              {
+                if (param.get_type() == rclcpp::ParameterType::PARAMETER_STRING && !param.as_string().empty())
+                {
+                  RCLCPP_INFO(this->get_logger(), "Updated local_map_topic to %s", param.as_string().c_str());
+                  local_map_topic_ = param.as_string();
+                }
+                else
+                {
+                  result.successful = false;
+                  result.reason = "local_map_topic can not be empty";
+                }
+              }
+              else if (param.get_name() == "local_map_resolution")
+              {
+                  if (param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE && param.as_double() > 0.0)
+                  {
+                      RCLCPP_INFO(this->get_logger(), "Updated local_map_resolution to %.2f", param.as_double());
+                      resolution_ = param.as_double();
+                  }
+                  else
+                  {
+                      result.successful = false;
+                      result.reason = "local_map_resolution must be > 0";
+                  }
+              }
+              else if (param.get_name() == "shift_threshold")
+              {
+                if (param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE && param.as_double() > 0.0)
+                {
+                  RCLCPP_INFO(this->get_logger(), "Updated shift_threshold to %.2f", param.as_double());
+                  shift_threshold_ = param.as_double();
+                }
+                else
+                {
+                  result.successful = false;
+                  result.reason = "shift_threshold must be > 0";
+                }
+              }
+              else if (param.get_name() == "reliable_inf_range")
+              {
+                if (param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE && param.as_double() > 0.0)
+                {
+                  RCLCPP_INFO(this->get_logger(), "Updated reliable_inf_range to %.2f", param.as_double());
+                  reliable_inf_range_ = param.as_double();
+                }
+                else
+                {
+                  result.successful = false;
+                  result.reason = "reliable_inf_range must be > 0";
+                }
+              }
+              else if (param.get_name() == "cluster_dist_euclid")
+              {
+                if (param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE && param.as_double() > 0.0)
+                {
+                  RCLCPP_INFO(this->get_logger(), "Updated cluster_dist_euclid to %.2f", param.as_double());
+                  cluster_dist_euclid_ = param.as_double();
+                }
+                else
+                {
+                  result.successful = false;
+                  result.reason = "cluster_dist_euclid must be > 0";
+                }
+              }
+              else if (param.get_name() == "min_points_per_cluster")
+              {
+                if (param.get_type() == rclcpp::ParameterType::PARAMETER_INTEGER && param.as_int() > 0)
+                {
+                  RCLCPP_INFO(this->get_logger(), "Updated min_points_per_cluster to %.2ld", param.as_int());
+                  min_points_per_cluster_ = static_cast<int>(param.as_int());
+                }
+                else
+                {
+                  result.successful = false;
+                  result.reason = "min_points_per_cluster must be > 0";
+                }
+              }
+              else if (param.get_name() == "local_map_cells_per_side")
+              {
+                if (param.get_type() == rclcpp::ParameterType::PARAMETER_INTEGER && param.as_int() > 0)
+                {
+                  RCLCPP_INFO(this->get_logger(), "Updated local_map_cells_per_side to %.2ld", param.as_int());
+                  width_ = static_cast<int>(param.as_int());
+                }
+                else
+                {
+                  result.successful = false;
+                  result.reason = "local_map_cells_per_side must be > 0";
+                }
+              }
+              else if (param.get_name() == "invalid_measurements_are_free_space")
+              {
+                if (param.get_type() == rclcpp::ParameterType::PARAMETER_BOOL)
+                {
+                  RCLCPP_INFO(this->get_logger(), "Updated invalid_measurements_are_free_space to %.2hhd", param.as_bool());
+                  invalid_measurements_are_free_space_ = param.as_bool();
+                }
+                else
+                {
+                  result.successful = false;
+                  result.reason = "invalid_measurements_are_free_space must be bool";
+                }
+              }
+              else if (param.get_name() == "unseen_is_free_space")
+              {
+                if (param.get_type() == rclcpp::ParameterType::PARAMETER_BOOL)
+                {
+                  RCLCPP_INFO(this->get_logger(), "Updated unseen_is_free_space to %.2hhd", param.as_bool());
+                  unseen_is_freespace_ = param.as_bool();
+                }
+                else
+                {
+                  result.successful = false;
+                  result.reason = "unseen_is_free_space must be bool";
+                }
+              }
+              else if (param.get_name() == "use_scan_header_stamp_for_tfs")
+              {
+                if (param.get_type() == rclcpp::ParameterType::PARAMETER_BOOL)
+                {
+                  RCLCPP_INFO(this->get_logger(), "Updated use_scan_header_stamp_for_tfs to %.2hhd", param.as_bool());
+                  use_scan_header_stamp_for_tfs_ = param.as_bool();
+                }
+                else
+                {
+                  result.successful = false;
+                  result.reason = "use_scan_header_stamp_for_tfs must be bool";
+                }
+              }
+            }
+            return result;
+        }
+
+
         /**
          * @brief Coordinated callback for both laser scan message and a non_leg_clusters message
-         * 
+         *
          * Called whenever both topics have been recently published to
         **/
-        void laserAndLegCallback(const sensor_msgs::msg::LaserScan::ConstSharedPtr& scan_msg, const leg_detector_msgs::msg::LegArray::ConstSharedPtr& non_leg_clusters) 
+        void laserAndLegCallback(const sensor_msgs::msg::LaserScan::ConstSharedPtr& scan_msg, const leg_detector_msgs::msg::LegArray::ConstSharedPtr& non_leg_clusters)
         {
 
             // Find out the time that should be used for tfs
@@ -181,8 +369,8 @@ class OccupancyGridMapping :public rclcpp::Node
 
                 try
                 {
-                    buffer_->canTransform(fixed_frame_, scan_msg->header.frame_id, tf_time, rclcpp::Duration(1.0));
-                    transform_available = buffer_->canTransform(fixed_frame_, scan_msg->header.frame_id, tf_time, rclcpp::Duration(1.0));
+                    buffer_->canTransform(fixed_frame_, scan_msg->header.frame_id, tf_time, rclcpp::Duration::from_seconds(1.0));
+                    transform_available = buffer_->canTransform(fixed_frame_, scan_msg->header.frame_id, tf_time, rclcpp::Duration::from_seconds(1.0));
                 } catch(tf2::TransformException &ex) {
                     RCLCPP_INFO(this->get_logger(), "Local Map : No tf available");
                     transform_available = false;
@@ -193,10 +381,10 @@ class OccupancyGridMapping :public rclcpp::Node
                 tf_time = rclcpp::Time(0);
                 transform_available = buffer_->canTransform(fixed_frame_, scan_msg->header.frame_id, tf_time);
             }
-            
+
             if (transform_available) {
 
-                // Next step: find scan beams that correspond to humans/tracked legs so 
+                // Next step: find scan beams that correspond to humans/tracked legs so
                 // we can count them as freespace in the grid occupancy map
 
                 // Transform tracked legs back into the laser frame
@@ -215,7 +403,7 @@ class OccupancyGridMapping :public rclcpp::Node
                     ps.header.frame_id = fixed_frame_;
                     ps.header.stamp = tf_time;
                     ps.point = p;
-                    
+
                     try {
                         buffer_->transform(ps, scan_msg->header.frame_id, tf2::durationFromSec(0.0));
                         geometry_msgs::msg::Point temp_p = ps.point;
@@ -257,12 +445,12 @@ class OccupancyGridMapping :public rclcpp::Node
                         s_iter != (*c_iter)->end();
                         ++s_iter) {
 
-                        is_sample_human[(*s_iter)->index] = is_cluster_human;        
+                        is_sample_human[(*s_iter)->index] = is_cluster_human;
                     }
                 }
 
                 // Next step: Update the local grid occupancy map
-                
+
                 // Get the pose of the laser in the fixed frame
                 bool transform_succesful;
                 geometry_msgs::msg::PoseStamped init_pose;
@@ -270,7 +458,7 @@ class OccupancyGridMapping :public rclcpp::Node
                 init_pose.header.frame_id = scan.header.frame_id;
                 init_pose.pose.orientation = createQuaternionMsgFromYaw(0.0);
                 init_pose.header.stamp = tf_time;
-                
+
                 try {
 
                     laser_pose_fixed_frame = buffer_->transform(init_pose, fixed_frame_, tf2::durationFromSec(0.0));
@@ -314,8 +502,8 @@ class OccupancyGridMapping :public rclcpp::Node
                                     if (unseen_is_freespace_)
                                         l_translated[i + width_*j] = l_min_;
                                     else
-                                        l_translated[i + width_*j] = l0_;    
-                                }   
+                                        l_translated[i + width_*j] = l0_;
+                                }
                             }
                         }
                         l_ = l_translated;
@@ -372,10 +560,10 @@ class OccupancyGridMapping :public rclcpp::Node
                                 if (valid_measurement) {
                                     double dist_rel = dist - scan.ranges[closest_beam_idx];
                                     double angle_rel = angle - closest_beam_angle;
-                                    if (dist > scan.range_max 
-                                        or dist > scan.ranges[closest_beam_idx] + ALPHA/2.0 
-                                        or fabs(angle_rel)>BETA/2 
-                                        or (!std::isfinite(scan.ranges[closest_beam_idx]) 
+                                    if (dist > scan.range_max
+                                        or dist > scan.ranges[closest_beam_idx] + ALPHA/2.0
+                                        or fabs(angle_rel)>BETA/2
+                                        or (!std::isfinite(scan.ranges[closest_beam_idx])
                                         and dist > reliable_inf_range_)) {
                                             m_update = UNKNOWN;
                                     }
@@ -391,7 +579,7 @@ class OccupancyGridMapping :public rclcpp::Node
                                     if (invalid_measurements_are_free_space_)
                                         m_update = FREE_SPACE;
                                     else
-                                        m_update = UNKNOWN;   
+                                        m_update = UNKNOWN;
                                 }
                             }
                             else {
@@ -426,7 +614,7 @@ class OccupancyGridMapping :public rclcpp::Node
 
         /**
           * @basic The logit function, i.e., the inverse of the logstic function
-          * @param p 
+          * @param p
           * @return The logit of p
         **/
         double logit(double p)
@@ -436,7 +624,7 @@ class OccupancyGridMapping :public rclcpp::Node
 
         /**
           * @basic The inverse of the logit function, i.e., the logsitic function
-          * @param p 
+          * @param p
           * @return The inverse logit of p
         **/
         double inverseLogit(double p)

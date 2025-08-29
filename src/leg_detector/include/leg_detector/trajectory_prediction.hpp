@@ -28,8 +28,10 @@ public:
   TrajectoryPredictionNode();
 private:
   void trajectoryArrayCallback(const leg_detector_msgs::msg::TrajectoryArray::SharedPtr msg);
+  rcl_interfaces::msg::SetParametersResult on_parameter_change(const std::vector<rclcpp::Parameter> &params);
   rclcpp::Subscription<leg_detector_msgs::msg::TrajectoryArray>::SharedPtr trajectoryArraySubscriber_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr predictedTrajectoryPublisher_;
+  OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
 
   std::string trajectory_array_topic_;
   std::string trajectory_visualization_topic_;

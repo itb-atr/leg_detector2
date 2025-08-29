@@ -22,26 +22,33 @@ class InflatedHumanScanNode : public rclcpp::Node
         InflatedHumanScanNode(): Node("inflated_human_scan"),
                              scan_sub_(this, "scan"),
                              people_tracked_sub_(this, "people_tracked"),
-                             sync_(scan_sub_, people_tracked_sub_, 200)
+                             sync_(scan_sub_, people_tracked_sub_, 10)
                                                             
         {
-            std::string scan_topic;
             // get the inflation radius parameter
-            this->declare_parameter("inflation_radius");
+            this->declare_parameter("scan_topic", "/scan");
+            this->get_parameter_or("scan_topic", scan_topic_, std::string("/scan"));
+            this->declare_parameter("people_tracked_topic", "people_tracked");
+            this->get_parameter_or("people_tracked_topic", people_tracked_topic_, std::string("people_tracked"));
+            this->declare_parameter("inflation_radius", 1.0);
             this->get_parameter_or("inflation_radius", inflation_r, 1.0);
             RCLCPP_INFO(this->get_logger(), "%f", inflation_r);
 
             
             // subscribe to the scan topic a(nd people tracked topic (for future design changes)
-            //scan_sub_.subscribe(this, "/scan");
-            //people_tracked_sub_.subscribe(this, "people_tracked");
+            rclcpp::QoS scan_qos_profile(rclcpp::QoSInitialization::from_rmw(rmw_qos_profile_sensor_data));
+            scan_qos_profile.best_effort();
+            scan_qos_profile.keep_last(10);
+            scan_qos_profile.durability_volatile();
+            scan_sub_.subscribe(this, scan_topic_, scan_qos_profile);
+            people_tracked_sub_.subscribe(this, people_tracked_topic_);
 
             // register a synchronized callback
             //message_filters::TimeSynchronizer<sensor_msgs::msg::LaserScan, interfaces::msg::PersonArray> sync_(scan_sub_, people_tracked_sub_, 200);
             sync_.registerCallback(std::bind(&InflatedHumanScanNode::inflated_human_callback, this, std::placeholders::_1, std::placeholders::_2));
 
             // publish to the inflated_human topic
-            ihs_pub_ = this->create_publisher<sensor_msgs::msg::LaserScan>("inflated_human_scan", 20);
+            ihs_pub_ = this->create_publisher<sensor_msgs::msg::LaserScan>("inflated_human_scan", scan_qos_profile);
 
         }
 
@@ -60,13 +67,62 @@ class InflatedHumanScanNode : public rclcpp::Node
         float angle_max;
         float angle_inc;
         double inflation_r;
-        sensor_msgs::msg::LaserScan updated_human_scan_;
         std::string scan_topic_;
+        std::string people_tracked_topic_;
 
+        rcl_interfaces::msg::SetParametersResult on_parameter_change(const std::vector<rclcpp::Parameter> &params)
+        {
+          rcl_interfaces::msg::SetParametersResult result;
+          result.successful = true;
+          result.reason = "success";
 
+          for (const auto &param : params)
+          {
+            if (param.get_name() == "scan_topic")
+            {
+              if (param.get_type() == rclcpp::ParameterType::PARAMETER_STRING && !param.as_string().empty())
+              {
+                RCLCPP_INFO(this->get_logger(), "Updated scan_topic to %s", param.as_string().c_str());
+                scan_topic_ = param.as_string();
+              }
+              else
+              {
+                result.successful = false;
+                result.reason = "scan_topic can not be empty";
+              }
+            }
+            else if (param.get_name() == "people_tracked_topic")
+            {
+              if (param.get_type() == rclcpp::ParameterType::PARAMETER_STRING && !param.as_string().empty())
+              {
+                RCLCPP_INFO(this->get_logger(), "Updated people_tracked_topic to %s", param.as_string().c_str());
+                people_tracked_topic_ = param.as_string();
+              }
+              else
+              {
+                result.successful = false;
+                result.reason = "people_tracked_topic can not be empty";
+              }
+            }
+            else if (param.get_name() == "inflation_radius")
+            {
+                if (param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE && param.as_double() > 0.0)
+                {
+                    RCLCPP_INFO(this->get_logger(), "Updated inflation_radius to %.2f", param.as_double());
+                    inflation_r = param.as_double();
+                }
+                else
+                {
+                    result.successful = false;
+                    result.reason = "inflation_radius must be > 0";
+                }
+            }
+          }
+          return result;
+        }
         // define the callback function
         void inflated_human_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr &scan, const leg_detector_msgs::msg::PersonArray::ConstSharedPtr &people_tracked) {
-
+            sensor_msgs::msg::LaserScan updated_human_scan_ = sensor_msgs::msg::LaserScan();
             // getting scan parameters
             angle_min = scan->angle_min;
             angle_max = scan->angle_max;
@@ -83,7 +139,7 @@ class InflatedHumanScanNode : public rclcpp::Node
 
                 //call function to return a scan with inflated radius
                 if (dH > inflation_r)
-                    inflate_human_position(xH, yH);
+                    inflate_human_position(xH, yH, &updated_human_scan_);
             }
 
             // update the other data in updated_human_scan topic
@@ -102,7 +158,7 @@ class InflatedHumanScanNode : public rclcpp::Node
         }
 
         // function that generages a bunch of points around a tracked human incorporating the inflation radius
-        void inflate_human_position (float xH, float yH) {
+        void inflate_human_position (float xH, float yH, sensor_msgs::msg::LaserScan *updated_human_scan) {
 
             Eigen::VectorXf temp_ranges;
             Eigen::VectorXf temp_angles;
@@ -127,8 +183,8 @@ class InflatedHumanScanNode : public rclcpp::Node
                 else if (temp_ranges[i] < 1)
                     temp_ranges[i] = 1;
                 
-                if (updated_human_scan_.ranges[temp_ind(i)] > temp_ranges(i))
-                    updated_human_scan_.ranges[temp_ind(i)] = temp_ranges(i);
+                if (updated_human_scan->ranges[temp_ind(i)] > temp_ranges(i))
+                    updated_human_scan->ranges[temp_ind(i)] = temp_ranges(i);
             }
 
         }

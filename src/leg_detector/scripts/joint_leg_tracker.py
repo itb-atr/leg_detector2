@@ -218,15 +218,15 @@ class KalmanMultiTrackerNode(Node):
 
 
     	# ROS publishers
-        self.people_tracked_pub = self.create_publisher(PersonArray, "people_tracked", 300)
-        self.trajectory_array_pub = self.create_publisher(TrajectoryArray, "trajectories", 300)
-        self.people_detected_pub = self.create_publisher(PersonArray, "people_detected", 300)
-        self.marker_pub = self.create_publisher(Marker, "visualization_marker", 300)
-        self.non_leg_clusters_pub = self.create_publisher(LegArray, "non_leg_clusters", 300)
+        self.people_tracked_pub = self.create_publisher(PersonArray, "people_tracked", 10)
+        self.trajectory_array_pub = self.create_publisher(TrajectoryArray, "trajectories", 10)
+        self.people_detected_pub = self.create_publisher(PersonArray, "people_detected", 10)
+        self.marker_pub = self.create_publisher(Marker, "visualization_marker", 10)
+        self.non_leg_clusters_pub = self.create_publisher(LegArray, "non_leg_clusters", 10)
 
         # ROS subscribers 
-        self.detected_clusters_sub = self.create_subscription(LegArray, "detected_leg_clusters", self.detected_clusters_callback, 300)
-        self.local_map_sub = self.create_subscription(OccupancyGrid, "local_map", self.local_map_callback, 300)
+        self.detected_clusters_sub = self.create_subscription(LegArray, "detected_leg_clusters", self.detected_clusters_callback, 10)
+        self.local_map_sub = self.create_subscription(OccupancyGrid, "local_map", self.local_map_callback, 10)
 
         rclpy.spin(self)
 

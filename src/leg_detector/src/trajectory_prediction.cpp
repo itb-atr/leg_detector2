@@ -57,8 +57,8 @@ double Line::getY(double x)
 TrajectoryPredictionNode::TrajectoryPredictionNode():
   Node("trajectory_prediction_node")
 {
-  this->declare_parameter("trajectory_visualization_topic");
-  this->declare_parameter("trajectory_array_topic");
+  this->declare_parameter("trajectory_visualization_topic", "/predicted_trajectories/marker");
+  this->declare_parameter("trajectory_array_topic", "/trajectories");
 
   this->get_parameter_or("trajectory_visualization_topic", trajectory_visualization_topic_, std::string("/predicted_trajectories/marker"));
   this->get_parameter_or("trajectory_array_topic", trajectory_array_topic_, std::string("/trajectories"));
@@ -71,6 +71,46 @@ TrajectoryPredictionNode::TrajectoryPredictionNode():
 
   this->predictedTrajectoryPublisher_ = this->create_publisher<visualization_msgs::msg::Marker>(trajectory_visualization_topic_, 20);
   this->trajectoryArraySubscriber_ = this->create_subscription<leg_detector_msgs::msg::TrajectoryArray>(trajectory_array_topic_, default_qos, std::bind(&TrajectoryPredictionNode::trajectoryArrayCallback, this, std::placeholders::_1));
+  this->param_callback_handle_ = this->add_on_set_parameters_callback(std::bind(&TrajectoryPredictionNode::on_parameter_change, this, std::placeholders::_1));
+
+}
+
+rcl_interfaces::msg::SetParametersResult TrajectoryPredictionNode::on_parameter_change(const std::vector<rclcpp::Parameter> &params)
+{
+  rcl_interfaces::msg::SetParametersResult result;
+  result.successful = true;
+  result.reason = "success";
+
+  for (const auto &param : params)
+  {
+    if (param.get_name() == "trajectory_visualization_topic")
+    {
+      if (param.get_type() == rclcpp::ParameterType::PARAMETER_STRING && !param.as_string().empty())
+      {
+        RCLCPP_INFO(this->get_logger(), "Updated trajectory_visualization_topic to %s", param.as_string().c_str());
+        trajectory_visualization_topic_ = param.as_string();
+      }
+      else
+      {
+        result.successful = false;
+        result.reason = "trajectory_visualization_topic can not be empty";
+      }
+    }
+    else if (param.get_name() == "trajectory_array_topic")
+    {
+      if (param.get_type() == rclcpp::ParameterType::PARAMETER_STRING && !param.as_string().empty())
+      {
+        RCLCPP_INFO(this->get_logger(), "Updated trajectory_array_topic to %s", param.as_string().c_str());
+        trajectory_array_topic_ = param.as_string();
+      }
+      else
+      {
+        result.successful = false;
+        result.reason = "trajectory_array_topic can not be empty";
+      }
+    }
+  }
+  return result;
 }
 
 void TrajectoryPredictionNode::trajectoryArrayCallback(const leg_detector_msgs::msg::TrajectoryArray::SharedPtr msg)

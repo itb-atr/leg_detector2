@@ -48,7 +48,7 @@
 #include <algorithm>
 #include <bullet/LinearMath/btVector3.h>
 
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 
 
@@ -82,7 +82,7 @@ namespace laser_processor
         /**
         * @brief The comparator allowing the creation of an ordered set of Samples
         */  
-        inline bool operator() (const Sample* a, const Sample* b)
+        inline bool operator() (const Sample* a, const Sample* b) const
         {
             return (a->index <  b->index);
         }
