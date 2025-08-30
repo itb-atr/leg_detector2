@@ -14,8 +14,8 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <visualization_msgs/msg/marker.hpp>
-#include <message_filters/subscriber.h>
-#include <message_filters/time_synchronizer.h>
+#include <message_filters/subscriber.hpp>
+#include <message_filters/time_synchronizer.hpp>
 
 
 // Include Custom Messages
@@ -50,9 +50,9 @@ class OccupancyGridMapping :public rclcpp::Node
     public:
 
         OccupancyGridMapping(): Node("OccupancyGridMapping"),
-                                scan_sub_(this, std::string("scan")),
-                                non_leg_clusters_sub_(this, "non_leg_clusters"),
-                                sync(scan_sub_, non_leg_clusters_sub_, 100)
+                                scan_sub_(this, std::string("scan"), rclcpp::SensorDataQoS()),
+                                non_leg_clusters_sub_(this, "non_leg_clusters", rclcpp::SystemDefaultsQoS()),
+                                sync(10, scan_sub_, non_leg_clusters_sub_)
         {
             grid_centre_pos_found_ = false;
 
@@ -109,11 +109,7 @@ class OccupancyGridMapping :public rclcpp::Node
                                                             this->get_node_timers_interface());
             buffer_->setCreateTimerInterface(timer_interface);
 
-            rclcpp::QoS scan_qos_profile(rclcpp::QoSInitialization::from_rmw(rmw_qos_profile_sensor_data));
-            scan_qos_profile.best_effort();
-            scan_qos_profile.keep_last(10);
-            scan_qos_profile.durability_volatile();
-            scan_sub_.subscribe(this, scan_topic_, scan_qos_profile);
+            scan_sub_.subscribe(this, scan_topic_, rclcpp::SensorDataQoS());
 
 
             // To coordinate callback for both laser scan message and a non_leg_clusters message

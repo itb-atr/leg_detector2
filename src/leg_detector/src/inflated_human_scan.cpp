@@ -1,8 +1,8 @@
 #include <rclcpp/rclcpp.hpp>
 
 // include headers for synchronized callbacks
-#include <message_filters/subscriber.h>
-#include <message_filters/time_synchronizer.h>
+#include <message_filters/subscriber.hpp>
+#include <message_filters/time_synchronizer.hpp>
 
 // include custom messages
 #include <leg_detector_msgs/msg/person_array.hpp>
@@ -20,9 +20,9 @@ class InflatedHumanScanNode : public rclcpp::Node
     public:
 
         InflatedHumanScanNode(): Node("inflated_human_scan"),
-                             scan_sub_(this, "scan"),
-                             people_tracked_sub_(this, "people_tracked"),
-                             sync_(scan_sub_, people_tracked_sub_, 10)
+                             scan_sub_(this, "scan", rclcpp::SensorDataQoS()),
+                             people_tracked_sub_(this, "people_tracked", rclcpp::SystemDefaultsQoS()),
+                             sync_(10, scan_sub_, people_tracked_sub_)
                                                             
         {
             // get the inflation radius parameter
@@ -34,22 +34,16 @@ class InflatedHumanScanNode : public rclcpp::Node
             this->get_parameter_or("inflation_radius", inflation_r, 1.0);
             RCLCPP_INFO(this->get_logger(), "%f", inflation_r);
 
-            
             // subscribe to the scan topic a(nd people tracked topic (for future design changes)
-            rclcpp::QoS scan_qos_profile(rclcpp::QoSInitialization::from_rmw(rmw_qos_profile_sensor_data));
-            scan_qos_profile.best_effort();
-            scan_qos_profile.keep_last(10);
-            scan_qos_profile.durability_volatile();
-            scan_sub_.subscribe(this, scan_topic_, scan_qos_profile);
-            people_tracked_sub_.subscribe(this, people_tracked_topic_);
+            scan_sub_.subscribe(this, scan_topic_, rclcpp::SensorDataQoS());
+            people_tracked_sub_.subscribe(this, people_tracked_topic_, rclcpp::SystemDefaultsQoS());
 
             // register a synchronized callback
             //message_filters::TimeSynchronizer<sensor_msgs::msg::LaserScan, interfaces::msg::PersonArray> sync_(scan_sub_, people_tracked_sub_, 200);
             sync_.registerCallback(std::bind(&InflatedHumanScanNode::inflated_human_callback, this, std::placeholders::_1, std::placeholders::_2));
 
             // publish to the inflated_human topic
-            ihs_pub_ = this->create_publisher<sensor_msgs::msg::LaserScan>("inflated_human_scan", scan_qos_profile);
-
+            ihs_pub_ = this->create_publisher<sensor_msgs::msg::LaserScan>("inflated_human_scan", rclcpp::SensorDataQoS());
         }
 
     private:

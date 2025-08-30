@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.8)
 
 project(leg_detector)
 
@@ -46,24 +46,24 @@ add_executable (detect_leg_clusters
                 include/leg_detector/laser_processor.h
                 include/leg_detector/cluster_features.h
                 )
-ament_target_dependencies(detect_leg_clusters rclcpp leg_detector_msgs OpenCV sensor_msgs tf2 tf2_geometry_msgs tf2_ros visualization_msgs) 
+target_link_libraries(detect_leg_clusters PUBLIC rclcpp::rclcpp  ${leg_detector_msgs_TARGETS}  ${OpenCV_LIBS}  ${sensor_msgs_TARGETS}  ${tf2_TARGETS}  ${tf2_geometry_msgs_TARGETS}  ${tf2_ros_TARGETS}  ${visualization_msgs_TARGETS})
 
 add_executable (trajectory_prediction
                 src/trajectory_prediction.cpp
                 )
-ament_target_dependencies(trajectory_prediction rclcpp leg_detector_msgs visualization_msgs)
+target_link_libraries(trajectory_prediction PUBLIC rclcpp::rclcpp  ${leg_detector_msgs_TARGETS}  ${visualization_msgs_TARGETS})
 
 add_executable (local_occupancy_grid_mapping
                 src/laser_processor.cpp
                 src/local_occupancy_grid_mapping.cpp
                 include/leg_detector/laser_processor.h
                 )
-ament_target_dependencies(local_occupancy_grid_mapping rclcpp leg_detector_msgs OpenCV sensor_msgs tf2 tf2_ros visualization_msgs nav_msgs tf2_geometry_msgs)
+target_link_libraries(local_occupancy_grid_mapping PUBLIC rclcpp::rclcpp  ${leg_detector_msgs_TARGETS}  ${OpenCV_LIBS}  ${sensor_msgs_TARGETS}  ${tf2_TARGETS}  ${tf2_ros_TARGETS}  ${visualization_msgs_TARGETS}  ${nav_msgs_TARGETS}  ${tf2_geometry_msgs_TARGETS})
 
 add_executable (inflated_human_scan
                 src/inflated_human_scan.cpp
                 )
-ament_target_dependencies(inflated_human_scan rclcpp leg_detector_msgs sensor_msgs message_filters)
+target_link_libraries(inflated_human_scan PUBLIC rclcpp::rclcpp  ${leg_detector_msgs_TARGETS}  ${sensor_msgs_TARGETS}  ${message_filters_TARGETS})
 
 install (TARGETS
   detect_leg_clusters

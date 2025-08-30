@@ -119,11 +119,7 @@ public:
         markers_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("visualization_marker", 20);
         detected_leg_clusters_pub_ = this->create_publisher<leg_detector_msgs::msg::LegArray>("detected_leg_clusters", 20);
 
-        rclcpp::QoS scan_qos_profile(rclcpp::QoSInitialization::from_rmw(rmw_qos_profile_sensor_data));
-        scan_qos_profile.best_effort();
-        scan_qos_profile.keep_last(10);
-        scan_qos_profile.durability_volatile();
-        this->scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(scan_topic_, scan_qos_profile, std::bind(&DetectLegClusters::laserCallback, this, std::placeholders::_1));
+        this->scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(scan_topic_, rclcpp::SensorDataQoS(), std::bind(&DetectLegClusters::laserCallback, this, std::placeholders::_1));
         param_callback_handle_ = this->add_on_set_parameters_callback(std::bind(&DetectLegClusters::on_parameter_change, this, std::placeholders::_1));
 
         buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
